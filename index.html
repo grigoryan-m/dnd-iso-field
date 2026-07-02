@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Арена — поле боя магов</title>
+<style>
+  :root{
+    --bg-void:#07070d;
+    --bg-deep:#0c0f1e;
+    --fog:#3a4468;
+    --line:#4a5578;
+    --ink:#e8e6f0;
+    --ink-dim:#9096b5;
+    --arcane:#6ee7d8;
+    --arcane-dim:#2f8f83;
+    --gold:#d9b25c;
+    --ally:#4da6ff;
+    --enemy:#ef5757;
+    --neutral:#e0b84f;
+    --object:#9098b0;
+    --barrier:#4da6ff;
+    --hp:#e0455a;
+    --panel-bg:rgba(12,14,28,0.82);
+    --panel-border:rgba(110,231,216,0.18);
+    --radius:10px;
+    --serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Times New Roman', serif;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:var(--bg-void);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  #scene{
+    position:fixed; inset:0;
+    background:
+      radial-gradient(ellipse at 50% 30%, #171d38 0%, #0c0f1e 45%, #07070d 100%);
+  }
+  canvas#field{ position:absolute; inset:0; width:100%; height:100%; cursor:grab; touch-action:none;}
+  canvas#field.dragging{ cursor:grabbing; }
+
+  .eyebrow{
+    font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--arcane); opacity:.85;
+  }
+  h1.title{
+    font-family:var(--serif); font-weight:400; font-size:15px; letter-spacing:.03em;
+    margin:2px 0 8px 0; color:var(--ink);
+  }
+
+  .panel{
+    position:absolute;
+    background:var(--panel-bg);
+    border:1px solid var(--panel-border);
+    border-radius:var(--radius);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03);
+    padding:12px 14px;
+    pointer-events:auto;
+  }
+
+  /* ---------- Initiative panel ---------- */
+  #initiative-panel{
+    top:14px; left:14px; width:210px; max-height:46vh; overflow:auto;
+  }
+  #initiative-panel .round{
+    font-family:var(--mono); font-size:11px; color:var(--gold); margin-bottom:6px;
+  }
+  .init-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px;}
+  .init-item{
+    display:flex; align-items:center; gap:8px;
+    padding:6px 8px; border-radius:7px; border:1px solid transparent;
+    background:rgba(255,255,255,.02);
+    font-size:12.5px; cursor:pointer;
+    transition:background .15s, border-color .15s;
+  }
+  .init-item:hover{ background:rgba(255,255,255,.05); }
+  .init-item.current{
+    border-color:var(--arcane);
+    background:rgba(110,231,216,.10);
+    box-shadow:0 0 12px rgba(110,231,216,.15) inset;
+  }
+  .init-badge{
+    font-family:var(--mono); font-size:10px; width:20px; height:20px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; flex:none;
+    background:rgba(255,255,255,.08); color:var(--ink-dim);
+  }
+  .init-item.current .init-badge{ background:var(--arcane); color:#04241f; }
+  .init-dot{ width:8px; height:8px; border-radius:50%; flex:none; }
+  .init-name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .init-score{ font-family:var(--mono); font-size:11px; color:var(--ink-dim); }
+  #next-turn-btn{ width:100%; margin-top:8px; }
+
+  /* ---------- Toolbar ---------- */
+  #toolbar{
+    top:14px; right:14px; display:flex; flex-direction:column; gap:8px; width:186px;
+  }
+  #toolbar .row{ display:flex; gap:8px; }
+
+  button, .btn{
+    font-family:inherit; font-size:12.5px; color:var(--ink);
+    background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:7px; padding:8px 10px; cursor:pointer;
+    transition:background .15s,border-color .15s, transform .05s;
+    letter-spacing:.01em;
+  }
+  button:hover{ background:rgba(255,255,255,.10); border-color:rgba(255,255,255,.18); }
+  button:active{ transform:scale(.97); }
+  button.primary{ background:linear-gradient(180deg,#2f8f83,#1c5c54); border-color:#3fb3a3; color:#eafffb; }
+  button.primary:hover{ filter:brightness(1.1); }
+  button.danger{ background:rgba(239,87,87,.12); border-color:rgba(239,87,87,.4); color:#ffb3b3; }
+  button.danger:hover{ background:rgba(239,87,87,.22); }
+  button.ghost{ background:transparent; }
+  button.small{ padding:4px 8px; font-size:11px; }
+  button.full{ width:100%; }
+
+  /* ---------- Unit inspector ---------- */
+  #unit-panel{
+    top:130px; right:14px; width:230px; display:none; max-height:74vh; overflow:auto;
+  }
+  #unit-panel.open{ display:block; }
+  .field{ margin-bottom:10px; }
+  .field label{ display:block; font-size:10.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px; }
+  .field input[type=text], .field input[type=number], .field select, .field textarea{
+    width:100%; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12);
+    border-radius:6px; color:var(--ink); padding:6px 8px; font-size:12.5px; font-family:inherit;
+  }
+  .field input:focus, .field select:focus{ outline:1px solid var(--arcane); border-color:var(--arcane); }
+  .stat-row{ display:flex; align-items:center; gap:6px; }
+  .stat-row input{ flex:1; text-align:center; }
+  .stat-row button{ padding:5px 9px; }
+  .faction-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .faction-swatch{
+    border-radius:6px; padding:6px 4px; font-size:10px; text-align:center; cursor:pointer;
+    border:1px solid rgba(255,255,255,.12); color:var(--ink-dim);
+  }
+  .faction-swatch.active{ color:#fff; border-color:#fff; box-shadow:0 0 0 1px rgba(255,255,255,.3); }
+  .axis-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+  .axis-box{ text-align:center; }
+  .axis-box .lbl{ font-size:10px; color:var(--ink-dim); }
+  .axis-box .val{ font-family:var(--mono); font-size:13px; color:var(--arcane); }
+  .status-list{ display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+  .status-chip{
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
+    border-radius:12px; padding:3px 8px 3px 6px; font-size:11px; display:flex; align-items:center; gap:4px;
+  }
+  .status-chip .rm{ cursor:pointer; opacity:.6; }
+  .status-chip .rm:hover{ opacity:1; color:var(--enemy); }
+  .status-add-grid{ display:grid; grid-template-columns:repeat(5,1fr); gap:4px; margin-top:6px; }
+  .status-add-grid button{ padding:5px 2px; font-size:14px; }
+  .hide-row{ display:flex; align-items:center; gap:7px; font-size:12px; color:var(--ink-dim); margin-top:2px;}
+  hr.sep{ border:none; border-top:1px solid rgba(255,255,255,.08); margin:12px 0; }
+
+  /* ---------- Modal ---------- */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(4,5,10,.65); backdrop-filter:blur(3px);
+    display:none; align-items:center; justify-content:center; z-index:50;
+  }
+  .modal-backdrop.open{ display:flex; }
+  .modal{
+    width:340px; max-width:92vw; max-height:86vh; overflow:auto;
+    background:var(--bg-deep); border:1px solid var(--panel-border); border-radius:12px;
+    padding:20px; box-shadow:0 20px 60px rgba(0,0,0,.6);
+  }
+  .modal h2{ font-family:var(--serif); font-weight:400; font-size:18px; margin:0 0 4px; }
+  .modal .sub{ font-size:11.5px; color:var(--ink-dim); margin-bottom:16px; }
+  .modal-actions{ display:flex; gap:8px; margin-top:16px; }
+  .modal-actions button{ flex:1; }
+  .link-box{ display:flex; gap:6px; }
+  .link-box input{ flex:1; }
+
+  /* ---------- misc ---------- */
+  #hint{
+    position:absolute; bottom:14px; left:50%; transform:translateX(-50%);
+    font-size:11px; color:var(--ink-dim); font-family:var(--mono); text-align:center;
+    background:rgba(8,9,17,.55); padding:6px 12px; border-radius:20px; border:1px solid rgba(255,255,255,.06);
+    pointer-events:none; white-space:nowrap;
+  }
+  #zoom-controls{ position:absolute; bottom:14px; right:14px; display:flex; flex-direction:column; gap:6px; }
+  #zoom-controls button{ width:34px; height:34px; padding:0; font-size:16px; }
+
+  #unit-tooltip{
+    position:fixed; z-index:40; pointer-events:none; display:none;
+    background:rgba(10,12,22,0.92); border:1px solid rgba(110,231,216,0.25);
+    border-radius:8px; padding:8px 10px; max-width:220px;
+    box-shadow:0 10px 26px rgba(0,0,0,.5);
+  }
+  #unit-tooltip .tt-name{ font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:6px; margin-bottom:4px;}
+  #unit-tooltip .tt-dot{ width:8px; height:8px; border-radius:50%; flex:none; }
+  #unit-tooltip .tt-faction{ color:var(--ink-dim); font-weight:400; font-size:11px; }
+  #unit-tooltip .tt-row{ font-size:11px; color:var(--ink-dim); line-height:1.5; font-family:var(--mono); }
+  #unit-tooltip .tt-row.tt-dim{ opacity:.6; font-family:inherit; }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.12); border-radius:4px; }
+</style>
+</head>
+<body>
+
+<div id="scene">
+  <canvas id="field"></canvas>
+
+  <!-- Initiative -->
+  <div class="panel" id="initiative-panel">
+    <div class="eyebrow">Инициатива</div>
+    <div class="round">Раунд <span id="round-num">1</span></div>
+    <ul class="init-list" id="init-list"></ul>
+    <button class="primary full" id="next-turn-btn">Следующий ход →</button>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="panel" id="toolbar">
+    <div class="eyebrow">Арена магов</div>
+    <h1 class="title">Управление боем</h1>
+    <button class="primary full" id="add-unit-btn">+ Добавить юнита</button>
+    <div class="row">
+      <button class="full" id="link-btn">🔗 Ссылка</button>
+      <button class="full" id="new-btn">✦ Новый бой</button>
+    </div>
+    <button class="full" id="snap-toggle">🧲 Привязка к сетке: Вкл</button>
+  </div>
+
+  <!-- Unit inspector -->
+  <div class="panel" id="unit-panel"></div>
+
+  <div id="zoom-controls">
+    <button id="zoom-in">+</button>
+    <button id="zoom-out">–</button>
+  </div>
+
+  <div id="hint">перетаскивание — переместить · Shift+перетаскивание — высота (шаг 5 фт) · Ctrl+перетаскивание / Ctrl+клик по двум юнитам — замер расстояния</div>
+  <div id="unit-tooltip"></div>
+</div>
+
+<!-- Add unit modal -->
+<div class="modal-backdrop" id="add-modal">
+  <div class="modal">
+    <h2>Новый юнит</h2>
+    <div class="sub">Заполните карточку — фигура появится на поле боя.</div>
+    <div class="field">
+      <label>Имя</label>
+      <input type="text" id="nu-name" placeholder="Архимаг Валдрис">
+    </div>
+    <div class="field">
+      <label>Тип</label>
+      <div class="faction-grid" id="nu-faction">
+        <div class="faction-swatch active" data-f="ally" style="border-color:var(--ally)">Союзник</div>
+        <div class="faction-swatch" data-f="enemy" style="border-color:var(--enemy)">Враг</div>
+        <div class="faction-swatch" data-f="neutral" style="border-color:var(--neutral)">Нейтрал</div>
+        <div class="faction-swatch" data-f="object" style="border-color:var(--object)">Объект</div>
+      </div>
+    </div>
+    <div class="row" style="display:flex; gap:10px;">
+      <div class="field" style="flex:1">
+        <label>ХП</label>
+        <input type="number" id="nu-hp" value="20" min="0">
+      </div>
+      <div class="field" style="flex:1">
+        <label>Барьер</label>
+        <input type="number" id="nu-barrier" value="0" min="0">
+      </div>
+    </div>
+    <div class="field">
+      <label>Инициатива</label>
+      <div class="stat-row">
+        <input type="number" id="nu-init" value="10">
+        <button class="small" id="nu-roll">🎲 d20</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="nu-cancel">Отмена</button>
+      <button class="primary" id="nu-create">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preset link modal -->
+<div class="modal-backdrop" id="link-modal">
+  <div class="modal">
+    <h2>Ссылка на пресет боя</h2>
+    <div class="sub">Текущая расстановка сохранена в ссылке. Откройте её — и бой соберётся заново, без сервера.</div>
+    <div class="link-box">
+      <input type="text" id="preset-url" readonly>
+      <button class="primary" id="copy-link">Копировать</button>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost full" id="link-close">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm delete modal -->
+<div class="modal-backdrop" id="confirm-modal">
+  <div class="modal">
+    <h2 id="confirm-title">Удалить юнита?</h2>
+    <div class="sub" id="confirm-sub">Это действие необратимо.</div>
+    <div class="modal-actions">
+      <button class="ghost" id="confirm-cancel">Отмена</button>
+      <button class="danger" id="confirm-ok">Удалить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   CONSTANTS
+   ============================================================ */
+const FACTION_COLOR = { ally:'#4da6ff', enemy:'#ef5757', neutral:'#e0b84f', object:'#9098b0' };
+const FACTION_LABEL = { ally:'Союзник', enemy:'Враг', neutral:'Нейтрал', object:'Объект' };
+const STATUS_PRESETS = [
+  {emoji:'🔥', label:'Горит'},
+  {emoji:'❄️', label:'Заморожен'},
+  {emoji:'☠️', label:'Отравлен'},
+  {emoji:'⚡', label:'Оглушён'},
+  {emoji:'🛡️', label:'Защищён'},
+  {emoji:'✨', label:'Благословлён'},
+  {emoji:'🩸', label:'Кровотечение'},
+  {emoji:'🌀', label:'Замедлен'},
+  {emoji:'💤', label:'Сон'},
+  {emoji:'💀', label:'При смерти'},
+];
+const GRID_RANGE = 26;      // half-extent of drawn grid
+const TILE = 46;            // base tile size px (before zoom)
+const HEIGHT_SCALE = 8;     // px per foot (1 grid cell = 5ft = 40px, matches ground tile)
+const FEET_PER_CELL = 5;
+const Z_MIN = -30, Z_MAX = 60; // feet
+const AUTOSAVE_KEY = 'mage-arena-state-v1';
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let state = {
+  units: [],
+  currentTurnId: null,
+  round: 1,
+  seq: 1
+};
+let camera = { x:0, y:0, zoom:1 };
+let selectedId = null;
+let gridSnap = true;
+function snapGround(v){ return gridSnap ? Math.floor(v)+0.5 : Math.round(v*10)/10; }
+function snapHeight(v){ return gridSnap ? Math.round(v/FEET_PER_CELL)*FEET_PER_CELL : Math.round(v); }
+
+let pendingFaction = 'ally';
+
+/* ============================================================
+   CANVAS SETUP
+   ============================================================ */
+const canvas = document.getElementById('field');
+const ctx = canvas.getContext('2d');
+function resize(){
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth+'px';
+  canvas.style.height = window.innerHeight+'px';
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ============================================================
+   PROJECTION (pseudo-3D isometric)
+   ============================================================ */
+function tileSize(){ return TILE * camera.zoom; }
+
+function project(x, y, z){
+  const t = tileSize();
+  const cx = window.innerWidth/2 + camera.x;
+  const cy = window.innerHeight/2 + camera.y;
+  const sx = cx + (x - y) * (t/2);
+  const sy = cy + (x + y) * (t/4) - z * (HEIGHT_SCALE*camera.zoom);
+  return { sx, sy };
+}
+function unproject(dsx, dsy){
+  // inverse of ground-plane part (z ignored) -> world dx,dy from screen delta
+  const t = tileSize();
+  const A = t/2, B = t/4;
+  const dx = (dsx/A + dsy/B) / 2;
+  const dy = (dsy/B - dsx/A) / 2;
+  return { dx, dy };
+}
+function depthOf(u){ return u.x + u.y - (u.z/FEET_PER_CELL)*0.35; }
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function draw(){
+  const w = window.innerWidth, h = window.innerHeight;
+  ctx.clearRect(0,0,w,h);
+  drawGrid();
+  const sorted = [...state.units].sort((a,b)=>depthOf(a)-depthOf(b));
+  sorted.forEach(drawUnit);
+  drawMeasure();
+  requestAnimationFrame(draw);
+}
+
+function fogAlpha(worldDist){
+  const maxD = GRID_RANGE * 0.72;
+  const a = 1 - (worldDist / maxD);
+  return Math.max(0, Math.min(0.55, a*0.55));
+}
+
+function drawGrid(){
+  const t = tileSize();
+  ctx.lineWidth = 1;
+  // lines of constant x
+  for(let gx=-GRID_RANGE; gx<=GRID_RANGE; gx++){
+    for(let gy=-GRID_RANGE; gy<GRID_RANGE; gy++){
+      const midDist = Math.sqrt(gx*gx + (gy+0.5)*(gy+0.5));
+      const a = fogAlpha(midDist);
+      if(a<=0.003) continue;
+      const p1 = project(gx, gy, 0);
+      const p2 = project(gx, gy+1, 0);
+      ctx.strokeStyle = `rgba(110,140,190,${a})`;
+      ctx.beginPath(); ctx.moveTo(p1.sx,p1.sy); ctx.lineTo(p2.sx,p2.sy); ctx.stroke();
+    }
+  }
+  // lines of constant y
+  for(let gy=-GRID_RANGE; gy<=GRID_RANGE; gy++){
+    for(let gx=-GRID_RANGE; gx<GRID_RANGE; gx++){
+      const midDist = Math.sqrt((gx+0.5)*(gx+0.5) + gy*gy);
+      const a = fogAlpha(midDist);
+      if(a<=0.003) continue;
+      const p1 = project(gx, gy, 0);
+      const p2 = project(gx+1, gy, 0);
+      ctx.strokeStyle = `rgba(110,140,190,${a})`;
+      ctx.beginPath(); ctx.moveTo(p1.sx,p1.sy); ctx.lineTo(p2.sx,p2.sy); ctx.stroke();
+    }
+  }
+  // origin glow ring (arcane circle flavor)
+  const o = project(0,0,0);
+  const ringGrad = ctx.createRadialGradient(o.sx,o.sy,0,o.sx,o.sy,t*3.2);
+  ringGrad.addColorStop(0,'rgba(110,231,216,0.05)');
+  ringGrad.addColorStop(1,'rgba(110,231,216,0)');
+  ctx.fillStyle = ringGrad;
+  ctx.beginPath(); ctx.arc(o.sx,o.sy,t*3.2,0,Math.PI*2); ctx.fill();
+}
+
+function drawUnit(u){
+  const t = tileSize();
+  const ground = project(u.x, u.y, 0);
+  const pos = project(u.x, u.y, u.z);
+  const dist = Math.sqrt(u.x*u.x + u.y*u.y);
+  const fog = 1 - Math.min(0.6, dist/(GRID_RANGE*0.9)*0.6);
+  const scale = Math.max(0.55, Math.min(1.25, 1 - (u.x+u.y)/(GRID_RANGE*2.6)));
+  const R = (t*0.34) * scale;
+  const color = FACTION_COLOR[u.faction];
+
+  // ground shadow (shrinks/lightens with height)
+  const shadowScale = Math.max(0.35, 1 - (u.z/FEET_PER_CELL)*0.12);
+  ctx.save();
+  ctx.globalAlpha = 0.35*fog*shadowScale;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(ground.sx, ground.sy, R*0.9*shadowScale, R*0.38*shadowScale, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // elevation stick
+  if(Math.abs(u.z) > 0.05){
+    ctx.save();
+    ctx.globalAlpha = 0.35*fog;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(ground.sx,ground.sy); ctx.lineTo(pos.sx,pos.sy); ctx.stroke();
+    ctx.restore();
+  }
+
+  // body (sphere-ish placeholder). objects = diamond, others = circle
+  ctx.save();
+  ctx.globalAlpha = fog;
+  const grad = ctx.createRadialGradient(pos.sx-R*0.3,pos.sy-R*0.35,R*0.15,pos.sx,pos.sy,R);
+  grad.addColorStop(0, lighten(color,35));
+  grad.addColorStop(1, color);
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = u.id===selectedId ? '#ffffff' : 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = u.id===selectedId ? 2.5 : 1.5;
+
+  ctx.beginPath();
+  if(u.faction==='object'){
+    ctx.moveTo(pos.sx, pos.sy-R); ctx.lineTo(pos.sx+R, pos.sy);
+    ctx.lineTo(pos.sx, pos.sy+R); ctx.lineTo(pos.sx-R, pos.sy);
+    ctx.closePath();
+  } else {
+    ctx.arc(pos.sx, pos.sy, R, 0, Math.PI*2);
+  }
+  ctx.fill(); ctx.stroke();
+
+  if(u.id===selectedId){
+    ctx.save();
+    ctx.globalAlpha = 0.5+0.5*Math.abs(Math.sin(Date.now()/400));
+    ctx.strokeStyle = '#6ee7d8';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(pos.sx,pos.sy,R+5,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // initial letter
+  ctx.globalAlpha = fog;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.font = `600 ${Math.max(10,R*0.85)}px system-ui`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText((u.name||'?').trim().charAt(0).toUpperCase(), pos.sx, pos.sy+1);
+  ctx.restore();
+
+  // status badges — row below the unit's shadow, clear of bars and body
+  if(u.statuses && u.statuses.length){
+    ctx.save();
+    ctx.globalAlpha = fog;
+    const iconR = Math.max(8, Math.min(11, R*0.34));
+    const n = u.statuses.length;
+    const spacing = iconR*2.35;
+    const rowY = ground.sy + R*0.42 + iconR + 8;
+    const startX = ground.sx - ((n-1)*spacing)/2;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    u.statuses.forEach((s,i)=>{
+      const bx = startX + i*spacing;
+      ctx.fillStyle = 'rgba(6,7,16,0.72)';
+      ctx.beginPath(); ctx.arc(bx, rowY, iconR, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.font = `${iconR*1.25}px system-ui`;
+      ctx.fillText(s.emoji, bx, rowY+0.5);
+    });
+    ctx.restore();
+  }
+
+  // name + bars above
+  ctx.save();
+  ctx.globalAlpha = fog;
+  const barW = Math.max(40, R*1.9);
+  const barH = 5;
+  let baseY = pos.sy - R - 14;
+
+  ctx.font = `600 ${Math.max(10,11*scale)}px -apple-system,system-ui`;
+  ctx.fillStyle = 'rgba(232,230,240,0.95)';
+  ctx.textAlign = 'center';
+  ctx.shadowColor='rgba(0,0,0,0.8)'; ctx.shadowBlur=4;
+  ctx.fillText(u.name || 'Безымянный', pos.sx, baseY - 8);
+  ctx.shadowBlur=0;
+
+  if(!u.hideStats){
+    if(u.barrierMax>0){
+      drawBar(pos.sx, baseY, barW, barH, u.barrier, u.barrierMax, '#4da6ff');
+      baseY += barH+3;
+    }
+    drawBar(pos.sx, baseY, barW, barH, u.hp, u.hpMax, '#e0455a');
+  }
+  ctx.restore();
+}
+
+function drawBar(cx, cy, w, h, val, max, color){
+  const x = cx - w/2;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  roundRect(x,cy,w,h,2.5); ctx.fill();
+  const pct = max>0 ? Math.max(0,Math.min(1,val/max)) : 0;
+  ctx.fillStyle = color;
+  if(pct>0){ roundRect(x,cy,w*pct,h,2.5); ctx.fill(); }
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+  roundRect(x,cy,w,h,2.5); ctx.stroke();
+  ctx.font = `600 9px ${'var(--mono)'}`;
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.font = '600 9px monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(`${Math.max(0,val)}/${max}`, cx, cy+h/2+0.5);
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+function lighten(hex, amt){
+  const c = hex.replace('#','');
+  const num = parseInt(c,16);
+  let r = (num>>16)+amt, g=((num>>8)&0xff)+amt, b=(num&0xff)+amt;
+  r=Math.min(255,r); g=Math.min(255,g); b=Math.min(255,b);
+  return `rgb(${r},${g},${b})`;
+}
+
+/* ============================================================
+   MEASUREMENT TOOL (Ctrl+drag on ground, Ctrl+click two units)
+   ============================================================ */
+function drawMeasure(){
+  if(!measure) return;
+
+  if(measure.mode==='pendingUnit'){
+    const u1 = state.units.find(x=>x.id===measure.id1);
+    if(!u1) return;
+    const p = project(u1.x,u1.y,u1.z);
+    const t = tileSize();
+    ctx.save();
+    ctx.strokeStyle = '#d9b25c';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4,4]);
+    ctx.globalAlpha = 0.6+0.4*Math.abs(Math.sin(Date.now()/350));
+    ctx.beginPath(); ctx.arc(p.sx,p.sy, t*0.42, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  let p1w, p2w;
+  if(measure.mode==='ground'){
+    p1w = { x:measure.p1.x, y:measure.p1.y, z:0 };
+    p2w = { x:measure.p2.x, y:measure.p2.y, z:0 };
+  } else if(measure.mode==='units'){
+    const u1 = state.units.find(x=>x.id===measure.id1);
+    const u2 = state.units.find(x=>x.id===measure.id2);
+    if(!u1 || !u2){ measure = null; return; }
+    p1w = { x:u1.x, y:u1.y, z:u1.z };
+    p2w = { x:u2.x, y:u2.y, z:u2.z };
+  } else { return; }
+
+  const dxFeet = (p2w.x - p1w.x) * FEET_PER_CELL;
+  const dyFeet = (p2w.y - p1w.y) * FEET_PER_CELL;
+  const dzFeet = p2w.z - p1w.z;
+  const distFeet = Math.sqrt(dxFeet*dxFeet + dyFeet*dyFeet + dzFeet*dzFeet);
+
+  const s1 = project(p1w.x, p1w.y, p1w.z);
+  const s2 = project(p2w.x, p2w.y, p2w.z);
+
+  ctx.save();
+  ctx.strokeStyle = '#d9b25c';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([7,5]);
+  ctx.beginPath(); ctx.moveTo(s1.sx,s1.sy); ctx.lineTo(s2.sx,s2.sy); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#d9b25c';
+  [s1,s2].forEach(p=>{ ctx.beginPath(); ctx.arc(p.sx,p.sy,4,0,Math.PI*2); ctx.fill(); });
+
+  const midX = (s1.sx+s2.sx)/2, midY = (s1.sy+s2.sy)/2;
+  const label = `${Math.round(distFeet)} фт`;
+  ctx.font = '600 13px monospace';
+  const tw = ctx.measureText(label).width;
+  const boxW = tw+18, boxH = 24;
+  ctx.fillStyle = 'rgba(6,7,16,0.88)';
+  roundRect(midX-boxW/2, midY-boxH/2, boxW, boxH, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(217,178,92,0.55)'; ctx.lineWidth = 1;
+  roundRect(midX-boxW/2, midY-boxH/2, boxW, boxH, 7); ctx.stroke();
+  ctx.fillStyle = '#f1dfa8';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, midX, midY+1);
+  ctx.restore();
+}
+
+/* ============================================================
+   HIT TESTING
+   ============================================================ */
+function hitTestUnit(mx, my){
+  const sorted = [...state.units].sort((a,b)=>depthOf(b)-depthOf(a)); // closest first
+  const t = tileSize();
+  for(const u of sorted){
+    const pos = project(u.x,u.y,u.z);
+    const scale = Math.max(0.55, Math.min(1.25, 1 - (u.x+u.y)/(GRID_RANGE*2.6)));
+    const R = (t*0.34)*scale;
+    const dx = mx-pos.sx, dy=my-pos.sy;
+    if(dx*dx+dy*dy <= (R+4)*(R+4)) return u;
+  }
+  return null;
+}
+
+/* ============================================================
+   POINTER INTERACTION
+   ============================================================ */
+let drag = null; // {type:'unit'|'camera'|'measure', ...}
+let measure = null; // {mode:'pendingUnit'|'units'|'ground', ...}
+
+function screenToGround(mx, my){
+  const cx = window.innerWidth/2 + camera.x;
+  const cy = window.innerHeight/2 + camera.y;
+  const { dx, dy } = unproject(mx-cx, my-cy);
+  return { x:dx, y:dy };
+}
+
+canvas.addEventListener('pointerdown', (e)=>{
+  const mx=e.clientX, my=e.clientY;
+
+  if(e.ctrlKey || e.metaKey){
+    const u = hitTestUnit(mx,my);
+    if(u){
+      if(measure && measure.mode==='pendingUnit' && measure.id1!==u.id){
+        measure = { mode:'units', id1:measure.id1, id2:u.id };
+      } else {
+        measure = { mode:'pendingUnit', id1:u.id };
+      }
+      drag = null;
+      return;
+    } else {
+      const p = screenToGround(mx,my);
+      measure = { mode:'ground', p1:p, p2:p };
+      drag = { type:'measure' };
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+  }
+
+  measure = null;
+  const u = hitTestUnit(mx,my);
+  if(u){
+    selectUnit(u.id);
+    drag = { type:'unit', id:u.id, startX:u.x, startY:u.y, startZ:u.z, lastX:mx, lastY:my, moved:false, shift:e.shiftKey };
+  } else {
+    selectUnit(null);
+    drag = { type:'camera', startCamX:camera.x, startCamY:camera.y, lastX:mx, lastY:my };
+  }
+  canvas.classList.add('dragging');
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', (e)=>{
+  const mx=e.clientX, my=e.clientY;
+  if(!drag){
+    const hovered = hitTestUnit(mx,my);
+    updateTooltip(hovered, mx, my);
+    canvas.style.cursor = (e.ctrlKey||e.metaKey) ? 'crosshair' : (hovered ? 'pointer' : 'grab');
+    return;
+  }
+  hideTooltip();
+  if(drag.type==='measure'){
+    measure.p2 = screenToGround(mx,my);
+    return;
+  }
+  const dsx = mx-drag.lastX, dsy = my-drag.lastY;
+  if(drag.type==='camera'){
+    camera.x += dsx; camera.y += dsy;
+  } else if(drag.type==='unit'){
+    const u = state.units.find(x=>x.id===drag.id);
+    if(!u) return;
+    if(Math.abs(dsx)>1||Math.abs(dsy)>1) drag.moved = true;
+    if(e.shiftKey){
+      drag.rawZ = (drag.rawZ===undefined ? u.z : drag.rawZ) - dsy*(FEET_PER_CELL/28);
+      u.z = snapHeight(Math.max(Z_MIN, Math.min(Z_MAX, drag.rawZ)));
+    } else {
+      const {dx,dy} = unproject(dsx,dsy);
+      drag.rawX = (drag.rawX===undefined ? u.x : drag.rawX) + dx;
+      drag.rawY = (drag.rawY===undefined ? u.y : drag.rawY) + dy;
+      u.x = snapGround(drag.rawX);
+      u.y = snapGround(drag.rawY);
+    }
+    if(selectedId===u.id) refreshUnitPanel();
+  }
+  drag.lastX = mx; drag.lastY = my;
+});
+canvas.addEventListener('pointerleave', ()=> hideTooltip());
+canvas.addEventListener('contextmenu', (e)=> e.preventDefault());
+window.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape') measure = null;
+});
+
+function updateTooltip(u, mx, my){
+  const el = document.getElementById('unit-tooltip');
+  if(!u){ el.style.display='none'; return; }
+  el.style.display='block';
+  const pad = 18;
+  let left = mx+pad, top = my+pad;
+  if(left + 230 > window.innerWidth) left = mx - 230 - pad;
+  if(top + 90 > window.innerHeight) top = my - 90 - pad;
+  el.style.left = left+'px';
+  el.style.top = top+'px';
+  const statusesHtml = u.statuses.length
+    ? `<div class="tt-row">Состояния: ${u.statuses.map(s=>s.emoji+' '+escapeHtml(s.label)).join(', ')}</div>`
+    : `<div class="tt-row tt-dim">Без состояний</div>`;
+  el.innerHTML = `
+    <div class="tt-name"><span class="tt-dot" style="background:${FACTION_COLOR[u.faction]}"></span>${escapeHtml(u.name)} <span class="tt-faction">· ${FACTION_LABEL[u.faction]}</span></div>
+    <div class="tt-row">Позиция: X ${u.x.toFixed(1)} · Y ${u.y.toFixed(1)} · Высота ${u.z.toFixed(0)} фт</div>
+    ${statusesHtml}
+  `;
+}
+function hideTooltip(){ document.getElementById('unit-tooltip').style.display='none'; }
+window.addEventListener('pointerup', (e)=>{
+  if(drag && drag.type==='unit'){ saveLocal(); renderInitiative(); }
+  drag = null;
+  canvas.classList.remove('dragging');
+});
+canvas.addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  const delta = -e.deltaY*0.0012;
+  camera.zoom = Math.max(0.45, Math.min(2.2, camera.zoom + delta));
+}, {passive:false});
+document.getElementById('zoom-in').onclick = ()=> camera.zoom = Math.min(2.2, camera.zoom+0.15);
+document.getElementById('zoom-out').onclick = ()=> camera.zoom = Math.max(0.45, camera.zoom-0.15);
+document.getElementById('snap-toggle').onclick = (e)=>{
+  gridSnap = !gridSnap;
+  e.target.textContent = gridSnap ? '🧲 Привязка к сетке: Вкл' : '🧲 Привязка к сетке: Выкл';
+};
+
+/* ============================================================
+   UNIT MODEL
+   ============================================================ */
+function createUnit(opts){
+  const angle = Math.random()*Math.PI*2;
+  const r = 1.5 + Math.random()*1.5;
+  const u = {
+    id: 'u'+(state.seq++),
+    name: opts.name || 'Без имени',
+    faction: opts.faction || 'ally',
+    x: opts.x!==undefined?opts.x:snapGround(Math.cos(angle)*r),
+    y: opts.y!==undefined?opts.y:snapGround(Math.sin(angle)*r),
+    z: 0,
+    hp: opts.hp!==undefined?opts.hp:20,
+    hpMax: opts.hpMax!==undefined?opts.hpMax:(opts.hp!==undefined?opts.hp:20),
+    barrier: opts.barrier!==undefined?opts.barrier:0,
+    barrierMax: opts.barrierMax!==undefined?opts.barrierMax:(opts.barrier!==undefined?opts.barrier:0),
+    initiative: opts.initiative!==undefined?opts.initiative:10,
+    hideStats: false,
+    statuses: []
+  };
+  state.units.push(u);
+  if(!state.currentTurnId) state.currentTurnId = u.id;
+  saveLocal();
+  return u;
+}
+function deleteUnit(id){
+  state.units = state.units.filter(u=>u.id!==id);
+  if(selectedId===id) selectUnit(null);
+  if(state.currentTurnId===id){
+    const order = sortedInitiative();
+    state.currentTurnId = order.length? order[0].id : null;
+  }
+  saveLocal(); renderInitiative();
+}
+
+/* ============================================================
+   INITIATIVE
+   ============================================================ */
+function sortedInitiative(){
+  return [...state.units].sort((a,b)=> b.initiative - a.initiative);
+}
+function renderInitiative(){
+  document.getElementById('round-num').textContent = state.round;
+  const list = document.getElementById('init-list');
+  const order = sortedInitiative();
+  list.innerHTML = '';
+  order.forEach((u,i)=>{
+    const li = document.createElement('li');
+    li.className = 'init-item' + (u.id===state.currentTurnId?' current':'');
+    li.innerHTML = `
+      <div class="init-badge">${i+1}</div>
+      <div class="init-dot" style="background:${FACTION_COLOR[u.faction]}"></div>
+      <div class="init-name">${escapeHtml(u.name)}</div>
+      <div class="init-score">${u.initiative}</div>
+    `;
+    li.onclick = ()=> selectUnit(u.id);
+    list.appendChild(li);
+  });
+  if(order.length===0){
+    list.innerHTML = '<div style="color:var(--ink-dim);font-size:11.5px;padding:6px 2px;">Юнитов пока нет</div>';
+  }
+}
+document.getElementById('next-turn-btn').onclick = ()=>{
+  const order = sortedInitiative();
+  if(order.length===0) return;
+  const idx = order.findIndex(u=>u.id===state.currentTurnId);
+  const nextIdx = (idx+1) % order.length;
+  if(nextIdx<=idx || idx===-1){ if(idx!==-1) state.round++; }
+  state.currentTurnId = order[nextIdx].id;
+  saveLocal(); renderInitiative();
+};
+
+/* ============================================================
+   UNIT INSPECTOR PANEL
+   ============================================================ */
+function selectUnit(id){
+  selectedId = id;
+  const panel = document.getElementById('unit-panel');
+  if(!id){ panel.classList.remove('open'); return; }
+  panel.classList.add('open');
+  refreshUnitPanel();
+}
+function refreshUnitPanel(){
+  const u = state.units.find(x=>x.id===selectedId);
+  const panel = document.getElementById('unit-panel');
+  if(!u){ panel.classList.remove('open'); return; }
+  panel.innerHTML = `
+    <div class="eyebrow">Карточка юнита</div>
+    <div class="field">
+      <label>Имя</label>
+      <input type="text" id="up-name" value="${escapeAttr(u.name)}">
+    </div>
+    <div class="field">
+      <label>Тип</label>
+      <div class="faction-grid" id="up-faction">
+        ${['ally','enemy','neutral','object'].map(f=>`
+          <div class="faction-swatch ${u.faction===f?'active':''}" data-f="${f}" style="border-color:${FACTION_COLOR[f]}">${FACTION_LABEL[f]}</div>
+        `).join('')}
+      </div>
+    </div>
+    <div class="field">
+      <label>ХП (текущее / макс)</label>
+      <div class="stat-row">
+        <button class="small" data-act="hp-1">−1</button>
+        <input type="number" id="up-hp" value="${u.hp}">
+        <span style="color:var(--ink-dim)">/</span>
+        <input type="number" id="up-hpmax" value="${u.hpMax}" style="max-width:56px">
+        <button class="small" data-act="hp+1">+1</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Барьер (текущий / макс)</label>
+      <div class="stat-row">
+        <button class="small" data-act="b-1">−1</button>
+        <input type="number" id="up-barrier" value="${u.barrier}">
+        <span style="color:var(--ink-dim)">/</span>
+        <input type="number" id="up-barriermax" value="${u.barrierMax}" style="max-width:56px">
+        <button class="small" data-act="b+1">+1</button>
+      </div>
+    </div>
+    <div class="hide-row">
+      <input type="checkbox" id="up-hide" ${u.hideStats?'checked':''}>
+      <label for="up-hide" style="margin:0;text-transform:none;letter-spacing:0;font-size:12px;">Скрыть ХП и барьер над юнитом</label>
+    </div>
+
+    <hr class="sep">
+    <div class="field">
+      <label>Позиция</label>
+      <div class="axis-grid">
+        <div class="axis-box"><div class="lbl">X</div><div class="val">${u.x.toFixed(1)}</div></div>
+        <div class="axis-box"><div class="lbl">Y (глубина)</div><div class="val">${u.y.toFixed(1)}</div></div>
+        <div class="axis-box"><div class="lbl">Z (высота)</div><div class="val">${u.z.toFixed(0)} фт</div></div>
+      </div>
+      <div class="row" style="display:flex; gap:6px; margin-top:8px;">
+        <button class="small full" data-act="z-1">Ниже ⬇ 5фт</button>
+        <button class="small full" data-act="z+1">Выше ⬆ 5фт</button>
+      </div>
+    </div>
+
+    <hr class="sep">
+    <div class="field">
+      <label>Инициатива</label>
+      <input type="number" id="up-init" value="${u.initiative}">
+    </div>
+
+    <hr class="sep">
+    <div class="field">
+      <label>Состояния</label>
+      <div class="status-list" id="up-statuses">
+        ${u.statuses.map((s,i)=>`<div class="status-chip">${s.emoji} ${escapeHtml(s.label)}<span class="rm" data-i="${i}">✕</span></div>`).join('') || '<span style="color:var(--ink-dim);font-size:11px;">нет</span>'}
+      </div>
+      <div class="status-add-grid">
+        ${STATUS_PRESETS.map(s=>`<button class="add-status" data-emoji="${s.emoji}" data-label="${s.label}" title="${s.label}">${s.emoji}</button>`).join('')}
+      </div>
+      <div class="stat-row" style="margin-top:6px;">
+        <input type="text" id="up-custom-status" placeholder="своё состояние…">
+        <button class="small" id="up-custom-add">+</button>
+      </div>
+    </div>
+
+    <hr class="sep">
+    <button class="danger full" id="up-delete">Удалить юнита</button>
+  `;
+
+  panel.querySelector('#up-name').oninput = e=>{ u.name=e.target.value; saveLocal(); renderInitiative(); };
+  panel.querySelectorAll('#up-faction .faction-swatch').forEach(el=>{
+    el.onclick = ()=>{ u.faction = el.dataset.f; saveLocal(); refreshUnitPanel(); renderInitiative(); };
+  });
+  panel.querySelector('#up-hp').onchange = e=>{ u.hp=clampNum(e.target.value,0,u.hpMax*4); saveLocal(); };
+  panel.querySelector('#up-hpmax').onchange = e=>{ u.hpMax=clampNum(e.target.value,0,99999); saveLocal(); };
+  panel.querySelector('#up-barrier').onchange = e=>{ u.barrier=clampNum(e.target.value,0,u.barrierMax*4); saveLocal(); };
+  panel.querySelector('#up-barriermax').onchange = e=>{ u.barrierMax=clampNum(e.target.value,0,99999); saveLocal(); };
+  panel.querySelector('#up-hide').onchange = e=>{ u.hideStats=e.target.checked; saveLocal(); };
+  panel.querySelector('#up-init').onchange = e=>{ u.initiative=clampNum(e.target.value,-99,99); saveLocal(); renderInitiative(); };
+
+  panel.querySelectorAll('[data-act]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const act = btn.dataset.act;
+      if(act==='hp-1') u.hp = Math.max(0,u.hp-1);
+      if(act==='hp+1') u.hp = u.hp+1;
+      if(act==='b-1') u.barrier = Math.max(0,u.barrier-1);
+      if(act==='b+1') u.barrier = u.barrier+1;
+      if(act==='z-1') u.z = snapHeight(Math.max(Z_MIN,u.z-FEET_PER_CELL));
+      if(act==='z+1') u.z = snapHeight(Math.min(Z_MAX,u.z+FEET_PER_CELL));
+      saveLocal(); refreshUnitPanel();
+    };
+  });
+
+  panel.querySelectorAll('.status-chip .rm').forEach(el=>{
+    el.onclick = ()=>{ u.statuses.splice(+el.dataset.i,1); saveLocal(); refreshUnitPanel(); };
+  });
+  panel.querySelectorAll('.add-status').forEach(el=>{
+    el.onclick = ()=>{ u.statuses.push({emoji:el.dataset.emoji, label:el.dataset.label}); saveLocal(); refreshUnitPanel(); };
+  });
+  panel.querySelector('#up-custom-add').onclick = ()=>{
+    const inp = panel.querySelector('#up-custom-status');
+    if(inp.value.trim()){ u.statuses.push({emoji:'🔖', label:inp.value.trim()}); saveLocal(); refreshUnitPanel(); }
+  };
+
+  panel.querySelector('#up-delete').onclick = ()=>{
+    openConfirm(`Удалить «${u.name}»?`, 'Юнит и его карточка будут удалены безвозвратно.', ()=>deleteUnit(u.id));
+  };
+}
+
+function clampNum(v,min,max){ const n=parseFloat(v); if(isNaN(n)) return min; return Math.max(min,Math.min(max,n)); }
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+
+/* ============================================================
+   ADD-UNIT MODAL
+   ============================================================ */
+const addModal = document.getElementById('add-modal');
+document.getElementById('add-unit-btn').onclick = ()=>{
+  document.getElementById('nu-name').value='';
+  document.getElementById('nu-hp').value=20;
+  document.getElementById('nu-barrier').value=0;
+  document.getElementById('nu-init').value=10;
+  pendingFaction = 'ally';
+  addModal.querySelectorAll('.faction-swatch').forEach(el=>el.classList.toggle('active', el.dataset.f==='ally'));
+  addModal.classList.add('open');
+  setTimeout(()=>document.getElementById('nu-name').focus(),50);
+};
+addModal.querySelectorAll('#nu-faction .faction-swatch').forEach(el=>{
+  el.onclick = ()=>{
+    pendingFaction = el.dataset.f;
+    addModal.querySelectorAll('.faction-swatch').forEach(x=>x.classList.remove('active'));
+    el.classList.add('active');
+  };
+});
+document.getElementById('nu-roll').onclick = ()=>{
+  document.getElementById('nu-init').value = 1+Math.floor(Math.random()*20);
+};
+document.getElementById('nu-cancel').onclick = ()=> addModal.classList.remove('open');
+document.getElementById('nu-create').onclick = ()=>{
+  const name = document.getElementById('nu-name').value.trim() || 'Без имени';
+  const hp = clampNum(document.getElementById('nu-hp').value,0,99999);
+  const barrier = clampNum(document.getElementById('nu-barrier').value,0,99999);
+  const initiative = clampNum(document.getElementById('nu-init').value,-99,99);
+  const u = createUnit({ name, faction:pendingFaction, hp, hpMax:hp, barrier, barrierMax:barrier, initiative });
+  addModal.classList.remove('open');
+  renderInitiative();
+  selectUnit(u.id);
+};
+
+/* ============================================================
+   LINK / PRESET MODAL
+   ============================================================ */
+const linkModal = document.getElementById('link-modal');
+document.getElementById('link-btn').onclick = ()=>{
+  const url = buildPresetUrl();
+  document.getElementById('preset-url').value = url;
+  linkModal.classList.add('open');
+};
+document.getElementById('link-close').onclick = ()=> linkModal.classList.remove('open');
+document.getElementById('copy-link').onclick = async ()=>{
+  const input = document.getElementById('preset-url');
+  input.select();
+  try{
+    await navigator.clipboard.writeText(input.value);
+    const btn = document.getElementById('copy-link');
+    const old = btn.textContent; btn.textContent='Скопировано ✓';
+    setTimeout(()=>btn.textContent=old, 1400);
+  }catch(e){ document.execCommand('copy'); }
+};
+
+function buildPresetUrl(){
+  const payload = { units: state.units, currentTurnId: state.currentTurnId, round: state.round, seq: state.seq };
+  const json = JSON.stringify(payload);
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  const url = new URL(window.location.href);
+  url.hash = 'preset=' + b64;
+  return url.toString();
+}
+function loadFromHash(){
+  const h = window.location.hash;
+  if(!h.startsWith('#preset=')) return false;
+  try{
+    const b64 = h.slice('#preset='.length);
+    const json = decodeURIComponent(escape(atob(b64)));
+    const payload = JSON.parse(json);
+    state.units = payload.units || [];
+    state.currentTurnId = payload.currentTurnId || (state.units[0] && state.units[0].id) || null;
+    state.round = payload.round || 1;
+    state.seq = payload.seq || (state.units.length+1);
+    return true;
+  }catch(e){ console.warn('Не удалось прочитать пресет из ссылки', e); return false; }
+}
+
+/* ============================================================
+   NEW FIGHT
+   ============================================================ */
+document.getElementById('new-btn').onclick = ()=>{
+  openConfirm('Начать новый бой?', 'Все юниты на поле будут удалены. Если нужно сохранить текущий бой — сначала скопируйте ссылку на пресет.', ()=>{
+    state = { units:[], currentTurnId:null, round:1, seq:1 };
+    camera = { x:0, y:0, zoom:1 };
+    selectUnit(null);
+    saveLocal();
+    renderInitiative();
+    history.replaceState(null,'',window.location.pathname+window.location.search);
+  }, 'Начать заново');
+};
+
+/* ============================================================
+   CONFIRM MODAL
+   ============================================================ */
+const confirmModal = document.getElementById('confirm-modal');
+let confirmCb = null;
+function openConfirm(title, sub, cb, okLabel){
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-sub').textContent = sub;
+  document.getElementById('confirm-ok').textContent = okLabel || 'Удалить';
+  confirmCb = cb;
+  confirmModal.classList.add('open');
+}
+document.getElementById('confirm-cancel').onclick = ()=>{ confirmModal.classList.remove('open'); confirmCb=null; };
+document.getElementById('confirm-ok').onclick = ()=>{
+  if(confirmCb) confirmCb();
+  confirmModal.classList.remove('open'); confirmCb=null;
+};
+
+/* ============================================================
+   PERSISTENCE
+   ============================================================ */
+function saveLocal(){
+  try{
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
+      units: state.units, currentTurnId: state.currentTurnId, round: state.round, seq: state.seq
+    }));
+  }catch(e){}
+}
+function loadLocal(){
+  try{
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if(!raw) return false;
+    const payload = JSON.parse(raw);
+    state.units = payload.units || [];
+    state.currentTurnId = payload.currentTurnId || null;
+    state.round = payload.round || 1;
+    state.seq = payload.seq || (state.units.length+1);
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ============================================================
+   DEMO PRESET (first-ever load)
+   ============================================================ */
+function loadDemo(){
+  createUnit({name:'Архимаг Лиора', faction:'ally', hp:32, barrier:12, initiative:17, x:-1.5, y:2.5});
+  createUnit({name:'Страж пламени', faction:'enemy', hp:26, barrier:0, initiative:14, x:3.5, y:-0.5});
+  createUnit({name:'Дух руин', faction:'neutral', hp:14, barrier:4, initiative:9, x:0.5, y:-2.5});
+  createUnit({name:'Разрушенный алтарь', faction:'object', hp:40, barrier:0, initiative:0, x:0.5, y:0.5});
+  const u = state.units.find(x=>x.faction==='enemy');
+  if(u) u.statuses.push({emoji:'🔥', label:'Горит'});
+  state.currentTurnId = sortedInitiative()[0].id;
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+(function init(){
+  const hadHash = loadFromHash();
+  if(!hadHash){
+    const hadLocal = loadLocal();
+    if(!hadLocal) loadDemo();
+  }
+  if(!state.currentTurnId && state.units.length) state.currentTurnId = sortedInitiative()[0].id;
+  renderInitiative();
+  requestAnimationFrame(draw);
+})();
+
+})();
+</script>
+</body>
+</html>
