@@ -222,6 +222,7 @@
       <button class="full" id="new-btn">✦ Новый бой</button>
     </div>
     <button class="full" id="snap-toggle">🧲 Привязка к сетке: Вкл</button>
+    <button class="full" id="mode-toggle">🧊 Режим: Изометрия</button>
   </div>
 
   <!-- Unit inspector -->
@@ -343,6 +344,8 @@ let state = {
   seq: 1
 };
 let camera = { x:0, y:0, zoom:1 };
+let renderMode = localStorage.getItem('mage-arena-mode') || 'iso'; // 'iso' | '3d'
+let cam3d = { yaw:-0.7, pitch:0.75, dist:18 };
 let selectedId = null;
 let gridSnap = true;
 function snapGround(v){ return gridSnap ? Math.floor(v)+0.5 : Math.round(v*10)/10; }
@@ -370,7 +373,7 @@ resize();
    ============================================================ */
 function tileSize(){ return TILE * camera.zoom; }
 
-function project(x, y, z){
+function projectIso(x, y, z){
   const t = tileSize();
   const cx = window.innerWidth/2 + camera.x;
   const cy = window.innerHeight/2 + camera.y;
@@ -378,15 +381,86 @@ function project(x, y, z){
   const sy = cy + (x + y) * (t/4) - z * (HEIGHT_SCALE*camera.zoom);
   return { sx, sy };
 }
+
+/* ---- true perspective 3D orbit camera ---- */
+function cam3dBasis(){
+  const yaw = cam3d.yaw, pitch = cam3d.pitch;
+  const dirx = Math.cos(pitch)*Math.sin(yaw);
+  const diry = Math.cos(pitch)*Math.cos(yaw);
+  const dirz = Math.sin(pitch);
+  const eye = { x: dirx*cam3d.dist, y: diry*cam3d.dist, z: dirz*cam3d.dist };
+  const F = { x:-dirx, y:-diry, z:-dirz }; // forward (unit)
+  let R = { x: F.y, y:-F.x, z:0 };         // cross(F, worldUp=(0,0,1)), normalized below
+  const rl = Math.hypot(R.x,R.y,R.z) || 1e-6;
+  R = { x:R.x/rl, y:R.y/rl, z:R.z/rl };
+  const U = { x: R.y*F.z - R.z*F.y, y: R.z*F.x - R.x*F.z, z: R.x*F.y - R.y*F.x }; // cross(R,F)
+  return { eye, R, U, F };
+}
+function project3d(x, y, z){
+  const wz = z/FEET_PER_CELL; // feet -> grid-cell units, same scale as x/y
+  const b = cam3dBasis();
+  const vx = x-b.eye.x, vy = y-b.eye.y, vz = wz-b.eye.z;
+  const camX = vx*b.R.x + vy*b.R.y + vz*b.R.z;
+  const camY = vx*b.U.x + vy*b.U.y + vz*b.U.z;
+  const camZ = vx*b.F.x + vy*b.F.y + vz*b.F.z;
+  const depth = Math.max(0.25, camZ);
+  const f = 480*camera.zoom;
+  const sx = window.innerWidth/2 + camera.x + (camX*f)/depth;
+  const sy = window.innerHeight/2 + camera.y - (camY*f)/depth;
+  return { sx, sy, depth };
+}
+function groundRay3d(mx, my){
+  // intersect the screen ray through (mx,my) with the ground plane z=0
+  const b = cam3dBasis();
+  const f = 480*camera.zoom;
+  const cx = window.innerWidth/2 + camera.x;
+  const cy = window.innerHeight/2 + camera.y;
+  const a = (mx-cx)/f, bb = -(my-cy)/f;
+  const d = {
+    x: a*b.R.x + bb*b.U.x + b.F.x,
+    y: a*b.R.y + bb*b.U.y + b.F.y,
+    z: a*b.R.z + bb*b.U.z + b.F.z
+  };
+  if(Math.abs(d.z) < 1e-6) return { x:0, y:0 };
+  const s = -b.eye.z/d.z;
+  return { x: b.eye.x + s*d.x, y: b.eye.y + s*d.y };
+}
+
+function project(x, y, z){
+  return renderMode==='3d' ? project3d(x,y,z) : projectIso(x,y,z);
+}
 function unproject(dsx, dsy){
-  // inverse of ground-plane part (z ignored) -> world dx,dy from screen delta
+  // inverse of ground-plane part (z ignored) -> world dx,dy from screen delta (isometric only)
   const t = tileSize();
   const A = t/2, B = t/4;
   const dx = (dsx/A + dsy/B) / 2;
   const dy = (dsy/B - dsx/A) / 2;
   return { dx, dy };
 }
-function depthOf(u){ return u.x + u.y - (u.z/FEET_PER_CELL)*0.35; }
+function localDeltaToWorld(px, py, pz, dsx, dsy){
+  // generic screen-delta -> world-delta via local Jacobian of project(); works for any projection
+  const eps = 0.05;
+  const p0 = project(px,py,pz);
+  const px1 = project(px+eps,py,pz);
+  const py1 = project(px,py+eps,pz);
+  const ex = { x:(px1.sx-p0.sx)/eps, y:(px1.sy-p0.sy)/eps };
+  const ey = { x:(py1.sx-p0.sx)/eps, y:(py1.sy-p0.sy)/eps };
+  const det = ex.x*ey.y - ey.x*ex.y;
+  if(Math.abs(det) < 1e-9) return { dx:0, dy:0 };
+  const dx = (dsx*ey.y - dsy*ey.x)/det;
+  const dy = (ex.x*dsy - ex.y*dsx)/det;
+  return { dx, dy };
+}
+function getScale(u, pos){
+  if(renderMode==='3d'){
+    return Math.max(0.45, Math.min(2.0, cam3d.dist/Math.max(0.6, pos.depth)));
+  }
+  return Math.max(0.55, Math.min(1.25, 1 - (u.x+u.y)/(GRID_RANGE*2.6)));
+}
+function depthOf(u){
+  if(renderMode==='3d') return -project3d(u.x,u.y,u.z).depth; // painter's algorithm: far first, near last
+  return u.x + u.y - (u.z/FEET_PER_CELL)*0.35;
+}
 
 /* ============================================================
    RENDER
@@ -449,7 +523,7 @@ function drawUnit(u){
   const pos = project(u.x, u.y, u.z);
   const dist = Math.sqrt(u.x*u.x + u.y*u.y);
   const fog = 1 - Math.min(0.6, dist/(GRID_RANGE*0.9)*0.6);
-  const scale = Math.max(0.55, Math.min(1.25, 1 - (u.x+u.y)/(GRID_RANGE*2.6)));
+  const scale = getScale(u, pos);
   const R = (t*0.34) * scale;
   const color = FACTION_COLOR[u.faction];
 
@@ -661,7 +735,7 @@ function hitTestUnit(mx, my){
   const t = tileSize();
   for(const u of sorted){
     const pos = project(u.x,u.y,u.z);
-    const scale = Math.max(0.55, Math.min(1.25, 1 - (u.x+u.y)/(GRID_RANGE*2.6)));
+    const scale = getScale(u, pos);
     const R = (t*0.34)*scale;
     const dx = mx-pos.sx, dy=my-pos.sy;
     if(dx*dx+dy*dy <= (R+4)*(R+4)) return u;
@@ -676,6 +750,7 @@ let drag = null; // {type:'unit'|'camera'|'measure', ...}
 let measure = null; // {mode:'pendingUnit'|'units'|'ground', ...}
 
 function screenToGround(mx, my){
+  if(renderMode==='3d') return groundRay3d(mx, my);
   const cx = window.innerWidth/2 + camera.x;
   const cy = window.innerHeight/2 + camera.y;
   const { dx, dy } = unproject(mx-cx, my-cy);
@@ -711,7 +786,11 @@ canvas.addEventListener('pointerdown', (e)=>{
     drag = { type:'unit', id:u.id, startX:u.x, startY:u.y, startZ:u.z, lastX:mx, lastY:my, moved:false, shift:e.shiftKey };
   } else {
     selectUnit(null);
-    drag = { type:'camera', startCamX:camera.x, startCamY:camera.y, lastX:mx, lastY:my };
+    if(renderMode==='3d' && e.altKey){
+      drag = { type:'orbit', lastX:mx, lastY:my };
+    } else {
+      drag = { type:'camera', startCamX:camera.x, startCamY:camera.y, lastX:mx, lastY:my };
+    }
   }
   canvas.classList.add('dragging');
   canvas.setPointerCapture(e.pointerId);
@@ -732,6 +811,9 @@ canvas.addEventListener('pointermove', (e)=>{
   const dsx = mx-drag.lastX, dsy = my-drag.lastY;
   if(drag.type==='camera'){
     camera.x += dsx; camera.y += dsy;
+  } else if(drag.type==='orbit'){
+    cam3d.yaw += dsx*0.0065;
+    cam3d.pitch = Math.max(-1.3, Math.min(1.3, cam3d.pitch - dsy*0.0065));
   } else if(drag.type==='unit'){
     const u = state.units.find(x=>x.id===drag.id);
     if(!u) return;
@@ -740,9 +822,11 @@ canvas.addEventListener('pointermove', (e)=>{
       drag.rawZ = (drag.rawZ===undefined ? u.z : drag.rawZ) - dsy*(FEET_PER_CELL/28);
       u.z = snapHeight(Math.max(Z_MIN, Math.min(Z_MAX, drag.rawZ)));
     } else {
-      const {dx,dy} = unproject(dsx,dsy);
-      drag.rawX = (drag.rawX===undefined ? u.x : drag.rawX) + dx;
-      drag.rawY = (drag.rawY===undefined ? u.y : drag.rawY) + dy;
+      const curX = drag.rawX===undefined ? u.x : drag.rawX;
+      const curY = drag.rawY===undefined ? u.y : drag.rawY;
+      const { dx, dy } = localDeltaToWorld(curX, curY, u.z, dsx, dsy);
+      drag.rawX = curX + dx;
+      drag.rawY = curY + dy;
       u.x = snapGround(drag.rawX);
       u.y = snapGround(drag.rawY);
     }
@@ -791,6 +875,21 @@ document.getElementById('zoom-out').onclick = ()=> camera.zoom = Math.max(0.45, 
 document.getElementById('snap-toggle').onclick = (e)=>{
   gridSnap = !gridSnap;
   e.target.textContent = gridSnap ? '🧲 Привязка к сетке: Вкл' : '🧲 Привязка к сетке: Выкл';
+};
+
+function updateModeButton(){
+  document.getElementById('mode-toggle').textContent = renderMode==='3d' ? '🧭 Режим: 3D' : '🧊 Режим: Изометрия';
+}
+function updateHint(){
+  document.getElementById('hint').textContent = renderMode==='3d'
+    ? 'перетаскивание — сдвинуть вид · Alt+перетаскивание — повернуть камеру · Shift+перетаскивание юнита — высота · Ctrl+перетаскивание/клик — замер расстояния'
+    : 'перетаскивание — переместить · Shift+перетаскивание — высота (шаг 5 фт) · Ctrl+перетаскивание / Ctrl+клик по двум юнитам — замер расстояния';
+}
+document.getElementById('mode-toggle').onclick = ()=>{
+  renderMode = renderMode==='iso' ? '3d' : 'iso';
+  try{ localStorage.setItem('mage-arena-mode', renderMode); }catch(e){}
+  updateModeButton();
+  updateHint();
 };
 
 /* ============================================================
@@ -1161,6 +1260,8 @@ function loadDemo(){
   }
   if(!state.currentTurnId && state.units.length) state.currentTurnId = sortedInitiative()[0].id;
   renderInitiative();
+  updateModeButton();
+  updateHint();
   requestAnimationFrame(draw);
 })();
 
